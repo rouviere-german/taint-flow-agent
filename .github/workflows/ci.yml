@@ -218,20 +218,25 @@ jobs:
           load: true
           push: false
           tags: ${{ env.IMAGE }}
-      - name: container smoke test (HEALTHCHECK reports healthy)
+      - name: container smoke test (liveness, then readiness)
         run: |
           docker run --detach --name app --read-only --tmpfs /tmp --cap-drop ALL \
             --security-opt no-new-privileges --health-interval 3s "$IMAGE"
+          healthy=0
           for _ in $(seq 1 30); do
             status="$(docker inspect --format '{{.State.Health.Status}}' app)"
-            if [ "$status" = "healthy" ]; then
-              test "$(docker inspect --format '{{.Config.User}}' app)" = "10001:10001"
-              exit 0
-            fi
+            if [ "$status" = "healthy" ]; then healthy=1; break; fi
             sleep 2
           done
-          docker logs app
-          exit 1
+          if [ "$healthy" -ne 1 ]; then docker logs app; exit 1; fi
+          test "$(docker inspect --format '{{.Config.User}}' app)" = "10001:10001"
+          # /healthz stays green in an image with no sink policy and no writable data
+          # directory; only /readyz proves the agent routes answer anything but 503.
+          if ! docker exec -e HEALTHCHECK_PATH=/readyz app \
+              python -m taint_flow_agent.core.healthcheck; then
+            docker logs app
+            exit 1
+          fi
       - name: trivy image scan
         uses: aquasecurity/trivy-action@0.32.0
         with:

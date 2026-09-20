@@ -29,12 +29,17 @@ RUN groupadd --system --gid 10001 app \
     && useradd --system --uid 10001 --gid app --no-create-home --home-dir /nonexistent \
        --shell /usr/sbin/nologin app
 COPY --from=builder /opt/venv /opt/venv
+WORKDIR /app
+# The deny-by-default sink policy is data, not code: without it in the image /readyz reports
+# not_ready and every agent route answers 503.
+COPY policies ./policies
 ENV PATH="/opt/venv/bin:${PATH}" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     APP_HOST=0.0.0.0 \
-    APP_PORT=8000
-WORKDIR /app
+    APP_PORT=8000 \
+    APP_POLICY_PATH=/app/policies/default.yaml \
+    APP_DATA_DIR=/tmp/var
 USER 10001:10001
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \

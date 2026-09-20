@@ -24,7 +24,10 @@ def main(argv: list[str] | None = None) -> int:
     del argv
     host = os.environ.get("HEALTHCHECK_HOST", "127.0.0.1")
     port = int(os.environ.get("APP_PORT", "8000"))
-    healthy = probe(host, port)
+    # HEALTHCHECK_PATH=/readyz turns this into a readiness probe (CI uses it to assert that the
+    # image really can serve: policy present, data directory writable).
+    path = os.environ.get("HEALTHCHECK_PATH", "/healthz")
+    healthy = probe(host, port, path)
     sys.stderr.write("healthy\n" if healthy else "unhealthy\n")
     return 0 if healthy else 1
 

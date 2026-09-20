@@ -56,9 +56,11 @@ def create_app(
 ) -> FastAPI:
     """Build the app. All state hangs off ``app.state``; nothing global is mutated.
 
-    ``service`` defaults to one built from the settings (policy file, data directory). Its
-    policy validation is a readiness check: an invalid or missing policy makes ``/readyz``
-    report ``not_ready`` and the agent routes answer 503.
+    ``service`` defaults to one built from the settings (policy file, data directory). Two of its
+    properties are readiness checks: an invalid or missing policy, and a data directory that
+    cannot be written (a read-only mount), each make ``/readyz`` report ``not_ready``. The agent
+    routes answer 503 on an unusable policy; the process still starts, so the operator can read
+    the reason instead of a crash loop.
     """
     from taint_flow_agent.api import register_routes  # noqa: PLC0415 - avoids an import cycle
     from taint_flow_agent.service import AgentService  # noqa: PLC0415
@@ -73,6 +75,7 @@ def create_app(
         else AgentService.from_settings(cfg, registry=metrics.registry)
     )
     checks.setdefault("policy", agent_service.ready)
+    checks.setdefault("storage", agent_service.storage_ready)
     verifier = ApiKeyVerifier(cfg.api_key_sha256)
     limiter = RateLimiter(
         cfg.rate_limit_per_second, cfg.rate_limit_burst, max_keys=cfg.rate_limit_max_clients

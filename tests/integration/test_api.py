@@ -184,7 +184,7 @@ def test_default_service_comes_from_settings(tmp_path: Any) -> None:
     with TestClient(create_app(settings), raise_server_exceptions=False) as client:
         ready = client.get("/readyz")
         assert ready.status_code == 200
-        assert ready.json()["checks"] == {"policy": "ok"}
+        assert ready.json()["checks"] == {"policy": "ok", "storage": "ok"}
         assert (tmp_path / "service").is_dir()
         run = client.post("/v1/plans/run", json={"request": "r", "plan": "x = 1\n"}, headers=AUTH)
         assert run.status_code == 200

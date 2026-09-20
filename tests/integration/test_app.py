@@ -5,7 +5,7 @@ import re
 import socket
 import threading
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 from fastapi import FastAPI
@@ -72,10 +72,10 @@ def test_readyz_reports_check_names_without_error_details() -> None:
     with make_client(app) as test_client:
         response = test_client.get("/readyz")
     assert response.status_code == 503
-    # "policy" is the service's own readiness check, always registered by create_app.
+    # "policy" and "storage" are the service's own checks, always registered by create_app.
     assert response.json() == {
         "status": "not_ready",
-        "checks": {"policy": "ok", "cache": "ok", "db": "fail"},
+        "checks": {"policy": "ok", "storage": "ok", "cache": "ok", "db": "fail"},
     }
     assert "hunter2" not in response.text
 
@@ -248,8 +248,10 @@ def test_docs_are_off_by_default_and_csp_is_relaxed_only_for_docs(client: TestCl
 
 class _Handler(http.server.BaseHTTPRequestHandler):
     status = 200
+    paths: ClassVar[list[str]] = []
 
     def do_GET(self) -> None:
+        type(self).paths.append(self.path)
         self.send_response(type(self).status)
         self.end_headers()
 
@@ -276,6 +278,20 @@ def test_healthcheck_probe_and_entrypoint(monkeypatch: pytest.MonkeyPatch) -> No
         assert healthcheck_main() == 0
     finally:
         server.shutdown()
+
+
+def test_healthcheck_can_probe_readiness(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CI runs the image's own probe with HEALTHCHECK_PATH=/readyz as the smoke test."""
+    server, port = _serve(_Handler)
+    _Handler.paths.clear()
+    try:
+        monkeypatch.setenv("HEALTHCHECK_HOST", "127.0.0.1")
+        monkeypatch.setenv("APP_PORT", str(port))
+        monkeypatch.setenv("HEALTHCHECK_PATH", "/readyz")
+        assert healthcheck_main() == 0
+    finally:
+        server.shutdown()
+    assert _Handler.paths == ["/readyz"]
 
 
 def test_healthcheck_fails_on_error_status_or_unreachable_server() -> None:

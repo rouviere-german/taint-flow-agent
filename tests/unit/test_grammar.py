@@ -314,7 +314,7 @@ def test_recursion_error_from_the_parser_becomes_a_rejection(
     def boom(*args: object, **kwargs: object) -> ast.Module:
         raise RecursionError("maximum recursion depth exceeded during ast construction")
 
-    monkeypatch.setattr(grammar.ast, "parse", boom)
+    monkeypatch.setattr(ast, "parse", boom)
     with pytest.raises(PlanRejectedError, match="nests too deeply"):
         parse(SIMPLE_PLAN)
 

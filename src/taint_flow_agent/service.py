@@ -68,12 +68,20 @@ class AgentService:
         self._metrics = metrics
         self._workspace_factory = workspace_factory
         self._audit: AuditLog | None = None
+        self._storage_error: str | None = None
         store_path = contexts_path = None
         if data_dir is not None:
-            data_dir.mkdir(parents=True, exist_ok=True)
-            store_path = data_dir / "approvals.json"
-            contexts_path = data_dir / "declassifications.json"
-            self._audit = AuditLog(data_dir / "audit.jsonl")
+            try:
+                data_dir.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                # A read-only or misconfigured mount must not stop the process from starting:
+                # /readyz reports it, the agent routes answer 503, and the operator sees why.
+                self._storage_error = f"{type(exc).__name__}: cannot use {data_dir.name}"
+                _log.error("data_dir_unusable", error_type=type(exc).__name__)
+            else:
+                store_path = data_dir / "approvals.json"
+                contexts_path = data_dir / "declassifications.json"
+                self._audit = AuditLog(data_dir / "audit.jsonl")
         self._store = ApprovalStore(store_path, ttl_seconds=ttl_seconds)
         self._gate = DeclassificationGate(
             self._store,
@@ -134,6 +142,14 @@ class AgentService:
 
     def ready(self) -> bool:
         return not self.policy_problems()
+
+    @property
+    def storage_error(self) -> str | None:
+        """Why declassifications and the audit log cannot be persisted (``None`` when they can)."""
+        return self._storage_error
+
+    def storage_ready(self) -> bool:
+        return self._storage_error is None
 
     # ------------------------------------------------------------------------------- runs
 
