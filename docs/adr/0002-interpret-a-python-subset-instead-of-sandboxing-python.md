@@ -49,7 +49,7 @@ conversions or format specs, and 22 pure builtins. There is no attribute access 
   operators, no regular expressions, no sorting by key. Tasks needing them must push the work into
   a tool, which is where a policy can see it. That is a real expressiveness cost.
 - **We own the evaluator's bugs.** A wrong comparison or a missing overflow check is ours, not
-  CPython's. The mitigation is that the evaluator is ~900 lines with 97% branch coverage, property
+  CPython's. The mitigation is that the evaluator is ~900 lines with 99% line+branch coverage, property
   tests over its label behaviour, and a fuzzer over the parser.
 - **The planner must be taught the subset.** The system prompt enumerates the grammar and the
   builtins. A plan that strays is rejected with a structural reason, which is a recoverable error,

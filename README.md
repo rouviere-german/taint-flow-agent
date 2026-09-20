@@ -274,7 +274,7 @@ That is the trade, and the benchmark reports it rather than hiding it.
 ### Mutation study — is every propagation rule load-bearing?
 
 ```bash
-uv run python bench/bench_mutation.py --check   # 6880 runs in 34.4s
+uv run python bench/bench_mutation.py --check   # 6880 runs in 31.3s
 ```
 
 Each of the 15 `PropagationRules` flags is switched off in turn; a probe or attack case *kills* the
@@ -316,18 +316,18 @@ uv run python bench/bench_baseline.py --check
 
 | benchmark | runs | p50 (us) | p95 (us) |
 |---|---:|---:|---:|
-| redact_text_1kb | 2000 | 340.3 | 466.2 |
-| rate_limiter_check | 20000 | 1.8 | 2.0 |
-| llm_request_sha256_10_messages | 2000 | 97.2 | 116.2 |
-| audit_append_fsync | 200 | 7455.5 | 8959.9 |
-| audit_verify_1000_entries | 10 | 38283.7 | 41596.2 |
-| label_join | 50000 | 3.1 | 3.6 |
-| plan_parse_and_whitelist | 2000 | 206.1 | 387.6 |
-| policy_decision | 20000 | 11.5 | 14.1 |
-| task_run_end_to_end | 200 | 11838.2 | 14689.1 |
+| redact_text_1kb | 2000 | 336.5 | 391.3 |
+| rate_limiter_check | 20000 | 1.8 | 1.9 |
+| llm_request_sha256_10_messages | 2000 | 97.0 | 109.7 |
+| audit_append_fsync | 200 | 7434.8 | 12634.5 |
+| audit_verify_1000_entries | 10 | 32531.8 | 33228.0 |
+| label_join | 50000 | 3.0 | 3.2 |
+| plan_parse_and_whitelist | 2000 | 246.8 | 290.4 |
+| policy_decision | 20000 | 11.4 | 12.1 |
+| task_run_end_to_end | 200 | 10324.6 | 11247.3 |
 
-A label join costs ~3 us and a policy decision ~12 us, so the information-flow machinery is not
-what dominates a run: the `fsync`-per-entry audit append is (~7.5 ms, and a full task writes one
+A label join costs ~3 us and a policy decision ~11 us, so the information-flow machinery is not
+what dominates a run: the `fsync`-per-entry audit append is (~7.4 ms, and a full task writes one
 entry per statement). All thresholds in
 `bench/thresholds*.json` are several times the measured values, because shared CI runners are
 noisy; they catch order-of-magnitude regressions, not drift.
@@ -335,7 +335,7 @@ noisy; they catch order-of-magnitude regressions, not drift.
 ### Test suite
 
 ```
-911 passed, 1 skipped in 55s   |   coverage 96.98% (floor 85%)
+973 passed, 1 skipped in 69s   |   coverage 98.04% (floor 85%)
 ```
 
 Property tests (hypothesis) cover the lattice laws (associativity, commutativity, idempotence,
