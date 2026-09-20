@@ -22,7 +22,9 @@ size are bounded so that parsing itself stays cheap on hostile input.
 from __future__ import annotations
 
 import ast
+import io
 import re
+import tokenize
 from collections.abc import Collection, Iterator
 from dataclasses import dataclass
 from typing import Any, final
@@ -41,6 +43,7 @@ __all__ = [
     "describe_node",
     "parse_plan",
     "plan_depth",
+    "token_limit",
 ]
 
 IDENTIFIER = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
@@ -321,23 +324,66 @@ class _Checker:
             self._check_expression(keyword.value)
 
 
+def token_limit(limits: Limits) -> int:
+    """Token budget screened before ``ast.parse``: far above anything ``max_nodes`` accepts."""
+    return max(4 * limits.max_nodes, 1_000)
+
+
+def _token_count(source: str, limit: int) -> int | None:
+    """Tokens in ``source``, stopping once ``limit`` is passed.
+
+    ``None`` means the source cannot be tokenized at all; ``ast.parse`` then reports the syntax
+    error, so this screen never decides whether a *valid* plan is accepted.
+    """
+    count = 0
+    try:
+        for _ in tokenize.generate_tokens(io.StringIO(source).readline):
+            count += 1
+            if count > limit:
+                return count
+    except (tokenize.TokenError, SyntaxError, ValueError, UnicodeError):
+        return None
+    return count
+
+
 def parse_plan(source: str, *, known_functions: Collection[str], limits: Limits) -> Plan:
     """Parse ``source`` and enforce the whitelist and static limits.
 
     Raises :class:`PlanSyntaxError` for invalid Python and :class:`PlanRejectedError` for any
     construct, name or size outside the allowlist. ``known_functions`` lists the tool and builtin
     names a plan may call.
+
+    Deeply nested sources are handled twice over: a token screen refuses them before ``ast.parse``
+    spends CPU on them, and the ``RecursionError`` CPython raises while building or walking such a
+    tree (it is not a ``SyntaxError``) is turned into a rejection rather than escaping the parser.
     """
     if not isinstance(source, str):
         raise PlanSyntaxError("plan source must be a str")
     if len(source.encode("utf-8")) > limits.max_source_bytes:
         raise PlanRejectedError("plan source is too large")
+    budget = token_limit(limits)
+    tokens = _token_count(source, budget)
+    if tokens is not None and tokens > budget:
+        raise PlanRejectedError(f"plan has too many tokens (> {budget})")
     try:
         # ``type_comments=True`` makes ``# type:`` comments visible to the checker instead of
         # silently discarded, so a plan cannot carry metadata the whitelist never sees.
         module = ast.parse(source, mode="exec", feature_version=(3, 12), type_comments=True)
     except (SyntaxError, ValueError) as exc:
         raise PlanSyntaxError(f"plan is not valid syntax: {type(exc).__name__}") from exc
+    except RecursionError as exc:
+        raise PlanRejectedError("plan nests too deeply for the parser") from exc
+    try:
+        return _analyze(source, module, known_functions=known_functions, limits=limits)
+    except RecursionError as exc:
+        raise PlanRejectedError("plan nests too deeply for the parser") from exc
+    except MemoryError as exc:  # pragma: no cover - needs a machine-sized tree to trigger
+        raise PlanRejectedError("plan needs too much memory to analyse") from exc
+
+
+def _analyze(
+    source: str, module: ast.Module, *, known_functions: Collection[str], limits: Limits
+) -> Plan:
     nodes = sum(1 for _ in ast.walk(module))
     if nodes > limits.max_nodes:
         raise PlanRejectedError(f"plan has too many nodes ({nodes} > {limits.max_nodes})")

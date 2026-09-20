@@ -9,6 +9,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from taint_flow_agent.dsl import grammar
 from taint_flow_agent.dsl.builtins import BUILTINS
 from taint_flow_agent.dsl.errors import PlanRejectedError, PlanSyntaxError
 from taint_flow_agent.dsl.grammar import (
@@ -267,8 +268,85 @@ def test_generated_trees_outside_the_whitelist_are_always_rejected(expr: ast.exp
         parse_plan(source, known_functions=KNOWN, limits=Limits())
 
 
-@settings(max_examples=100)
-@given(st.text(min_size=1, max_size=200))
+@settings(max_examples=60)
+@given(st.text(min_size=1, max_size=Limits().max_source_bytes))
 def test_random_text_never_crashes_the_parser(source: str) -> None:
     with contextlib.suppress(PlanRejectedError, PlanSyntaxError):
         parse_plan(source, known_functions=KNOWN, limits=Limits())
+
+
+SIMPLE_PLAN = 'write_file(name="a.txt", content="ok")\n'
+
+DEEPLY_NESTED = [
+    pytest.param("x = " + "not " * 4000 + "1\n", id="unary_not"),
+    pytest.param("x = " + "-" * 8000 + "1\n", id="unary_minus"),
+    pytest.param("x = " + "1 + " * 4000 + "1\n", id="binary_operator"),
+    pytest.param("x = a" + "[0]" * 3000 + "\n", id="subscript"),
+]
+
+# CPython's tokenizer refuses these two itself ("too many nested parentheses"), so they arrive as
+# a syntax error rather than a rejection; they are here to prove they never crash either.
+NESTING_BOMBS = [
+    pytest.param("x = " + "[" * 2000 + "]" * 2000 + "\n", id="list_literal"),
+    pytest.param("x = " + "(" * 4000 + "1" + ")" * 4000 + "\n", id="parentheses"),
+]
+
+
+@pytest.mark.parametrize("source", DEEPLY_NESTED)
+def test_deeply_nested_sources_are_rejected_not_crashed(source: str) -> None:
+    """CPython raises RecursionError, not SyntaxError, on trees that fit inside the size limit."""
+    assert len(source.encode("utf-8")) <= Limits().max_source_bytes
+    with pytest.raises(PlanRejectedError, match=r"too many tokens|nests too deeply"):
+        parse(source)
+
+
+@pytest.mark.parametrize("source", NESTING_BOMBS)
+def test_nesting_bombs_are_rejected_not_crashed(source: str) -> None:
+    with pytest.raises((PlanRejectedError, PlanSyntaxError)):
+        parse(source)
+
+
+def test_recursion_error_from_the_parser_becomes_a_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The token screen catches nesting early; if one ever slips past, it must not escape."""
+
+    def boom(*args: object, **kwargs: object) -> ast.Module:
+        raise RecursionError("maximum recursion depth exceeded during ast construction")
+
+    monkeypatch.setattr(grammar.ast, "parse", boom)
+    with pytest.raises(PlanRejectedError, match="nests too deeply"):
+        parse(SIMPLE_PLAN)
+
+
+def test_recursion_error_while_analysing_becomes_a_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def boom(node: ast.AST) -> int:
+        raise RecursionError("maximum recursion depth exceeded")
+
+    monkeypatch.setattr(grammar, "plan_depth", boom)
+    with pytest.raises(PlanRejectedError, match="nests too deeply"):
+        parse(SIMPLE_PLAN)
+
+
+def test_reference_plans_are_far_below_the_token_screen() -> None:
+    budget = grammar.token_limit(Limits())
+    counts = [grammar._token_count(task.plan, budget) for task in TASKS]
+    assert all(count is not None and count < budget // 4 for count in counts)
+
+
+_WRAPPERS = [("not ", ""), ("-", ""), ("(", ")"), ("[", "]"), ("{'k': ", "}")]
+
+
+@settings(max_examples=40)
+@given(st.sampled_from(_WRAPPERS), st.integers(min_value=1, max_value=4000))
+def test_repeated_nesting_of_any_depth_is_rejected_cleanly(
+    wrapper: tuple[str, str], count: int
+) -> None:
+    opening, closing = wrapper
+    source = "x = " + opening * count + "1" + closing * count + "\n"
+    if len(source.encode("utf-8")) > Limits().max_source_bytes:
+        return
+    with contextlib.suppress(PlanRejectedError, PlanSyntaxError):
+        parse(source)

@@ -79,6 +79,17 @@ def test_run_plan_reports_labels_and_denials_without_values(client: TestClient) 
     assert rejected.json()["status"] == "rejected"
 
 
+def test_a_deeply_nested_plan_is_rejected_not_a_server_error(client: TestClient) -> None:
+    """A plan that fits the 20 000-character limit but nests thousands deep used to 500."""
+    plan = "x = " + "not " * 4_000 + "1\n"
+    assert len(plan) <= 20_000
+    response = client.post("/v1/plans/run", json={"request": "r", "plan": plan}, headers=AUTH)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "rejected"
+    assert payload["error"]
+
+
 def test_validation_errors_never_echo_submitted_values(client: TestClient) -> None:
     secret = "hunter2-" + "s" * 10
     extra = client.post(
