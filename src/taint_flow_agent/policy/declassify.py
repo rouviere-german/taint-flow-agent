@@ -29,6 +29,7 @@ from taint_flow_agent.agentic.tools import ValidatedCall
 from taint_flow_agent.core.fileio import atomic_write_text, file_lock
 
 __all__ = [
+    "ApproveAllReviewer",
     "Decider",
     "DecisionOutcome",
     "DeclassificationContext",
@@ -37,6 +38,7 @@ __all__ = [
     "DeclassificationPendingError",
     "DenyAllReviewer",
     "PendingDecider",
+    "RecordingDecider",
     "ScriptedReviewer",
 ]
 
@@ -110,6 +112,41 @@ class DenyAllReviewer:
     def __call__(self, record: ApprovalRecord, context: DeclassificationContext) -> DecisionOutcome:
         del record, context
         return "denied"
+
+
+@final
+class ApproveAllReviewer:
+    """The rubber stamp: approves every request without reading the provenance display.
+
+    The benchmark runs this deliberately. A declassification gate is only worth what the human
+    behind it is worth, and a configuration that assumes an ideal reviewer measures the reviewer,
+    not the architecture (see the README results table).
+    """
+
+    name = "approve-all-reviewer"
+
+    def __call__(self, record: ApprovalRecord, context: DeclassificationContext) -> DecisionOutcome:
+        del record, context
+        return "approved"
+
+
+@final
+class RecordingDecider:
+    """Wraps any decider and records the ``(rule, outcome)`` pairs it produced."""
+
+    def __init__(self, inner: Decider) -> None:
+        self._inner = inner
+        self.name = inner.name
+        self.decisions: list[tuple[str, DecisionOutcome]] = []
+
+    @property
+    def inner(self) -> Decider:
+        return self._inner
+
+    def __call__(self, record: ApprovalRecord, context: DeclassificationContext) -> DecisionOutcome:
+        outcome = self._inner(record, context)
+        self.decisions.append((context.rule, outcome))
+        return outcome
 
 
 @final

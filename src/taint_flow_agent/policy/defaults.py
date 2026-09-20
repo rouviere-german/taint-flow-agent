@@ -20,7 +20,8 @@ DEFAULT_POLICY_YAML: Final = """\
 #   integrity: user            the value was written by the planner from the user's request
 #   member_of: contacts        the value is in a trusted collection of the workspace
 #   argument_integrity         another argument of the same call has that integrity
-#   readers_include: to        the data may be read by every principal named in `to`
+#   readers_include: to        every principal named in `to` is allowed to read the data
+#                              (plan constants are public; tool results carry the record's readers)
 #   $pc / pc_integrity         the call is not guarded by a branch on less trusted data
 #   on_fail: deny              stop the run, record the provenance path
 #   on_fail: declassify        hold the call for a human who sees the provenance graph
@@ -34,17 +35,14 @@ sinks:
           - integrity: user
           - member_of: contacts
       on_fail: deny
+    # Confidentiality, not integrity: a value may leave only towards its own readers, whoever
+    # chose the recipient. Plan constants are public, so an ordinary e-mail is unaffected;
+    # forwarding a file or a message to somebody outside its reader set asks a human first.
     subject:
-      require:
-        any_of:
-          - argument_integrity: {argument: to, level: user}
-          - readers_include: to
+      require: {readers_include: to}
       on_fail: declassify
     body:
-      require:
-        any_of:
-          - argument_integrity: {argument: to, level: user}
-          - readers_include: to
+      require: {readers_include: to}
       on_fail: declassify
     $pc:
       require: {pc_integrity: trusted_tool}
