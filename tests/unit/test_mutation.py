@@ -10,8 +10,10 @@ from __future__ import annotations
 import pytest
 
 from taint_flow_agent.dsl.interpreter import PropagationRules
+from taint_flow_agent.env.tasks import task_by_id
 from taint_flow_agent.evaluation.mutation import (
     PROBES,
+    Probe,
     probe_workspace,
     run_mutation_study,
     run_probe,
@@ -72,3 +74,56 @@ def test_study_json_is_reportable(study: object) -> None:
     assert set(report["policies"]) == {"default", "pc_blind"}
     assert report["policies"]["pc_blind"]["caught"] == len(PropagationRules.names())
     assert set(report["probe_baseline_executed_sinks"]["pc_blind"]) == {p.id for p in PROBES}
+
+
+def test_a_probe_whose_plan_never_runs_contributes_no_executed_sinks() -> None:
+    """A mutant that breaks the plan must count as "nothing executed", not crash the study."""
+    broken = Probe(
+        id="P-broken",
+        rule="assign_joins_pc",
+        description="a plan the whitelist refuses, so the run has no result at all",
+        plan="import os\n",
+    )
+    report = run_probe(broken, rules=PropagationRules.all(), policy=default_policy())
+    assert report.result is None
+    study = run_mutation_study(
+        probes=[broken],
+        policies={"default": default_policy()},
+        include_attack_suite=False,
+    )
+    assert study.probe_baseline["default"]["P-broken"] == []
+    assert study.caught("default") == dict.fromkeys(PropagationRules.names(), False)
+
+
+def test_the_attack_suite_arm_records_the_cases_that_kill_a_mutant() -> None:
+    """The arm that produces the README's killed counts, on one task x one carrier.
+
+    The full grid is the benchmark; this pins the accounting - run count, case keys and the
+    reference comparison - so a change in how survivors are reported fails here first.
+    """
+    task = task_by_id("T25")
+    probe = next(p for p in PROBES if p.rule == "branch_raises_pc")
+    rules = PropagationRules.names()
+
+    study = run_mutation_study(
+        tasks=[task],
+        carriers=["email_body"],
+        probes=[probe],
+        policies={"pc_blind": default_policy().without_context_rules()},
+        include_attack_suite=True,
+    )
+
+    # 1 reference probe + 1 reference attack + 15 rules x (1 probe + 1 attack).
+    assert study.runs == 2 + 2 * len(rules)
+    assert set(study.policies) == {"pc_blind"}
+    assert set(study.caught("pc_blind")) == set(rules)
+
+    killed = study.policies["pc_blind"]
+    for rule, cases in killed.items():
+        assert set(cases) <= {probe.id, "T25/email_body"}, rule
+    # The reference run is not itself a kill: with every rule on, this task is not hijacked.
+    assert any(cases for cases in killed.values()), "no mutant was caught at all"
+
+    report = study.to_json()
+    assert report["policies"]["pc_blind"]["total"] == len(rules)
+    assert report["policies"]["pc_blind"]["caught"] == sum(1 for cases in killed.values() if cases)

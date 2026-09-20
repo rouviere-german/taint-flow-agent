@@ -298,9 +298,13 @@ mutant when a sink executes under it that the full rule set stopped.
 | tool_result_labeled_by_source | 15 | 15 |
 | reader_output_joins_input | 2 | 2 |
 
-**15/15 under the pc-blind policy, 14/15 under the default one.** `call_args_join_pc` survives with
-the shipped policy because its `$pc` rules check the program-counter label directly, making the
-argument-level upgrade redundant *there*. The pc-blind policy removes those rules so the labels
+**15/15 under the pc-blind policy, 14/15 under the default one.** Every kill in the table above
+came from a probe: across the 6400 attacked runs of the grid arm, **no mutant produced an attack
+success the full rule set had prevented**, under either policy. That arm is therefore a
+cross-check (turning a rule off never opens a hole in the 40x5 benchmark) rather than a source of
+kills, and the fifteen hand-written probes are what actually pin each rule. `call_args_join_pc`
+survives with the shipped policy because its `$pc` rules check the program-counter label directly,
+making the argument-level upgrade redundant *there*. The pc-blind policy removes those rules so the labels
 alone must catch each implicit flow, and that is the configuration CI enforces
 ([ADR 0003](docs/adr/0003-pc-rules-and-label-only-enforcement.md)).
 
