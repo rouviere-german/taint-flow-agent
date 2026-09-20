@@ -15,8 +15,10 @@ from taint_flow_agent.evaluation.stats import Rate, wilson_interval
 from taint_flow_agent.evaluation.suite import (
     Effect,
     Evaluator,
+    ReviewerKind,
     attacker_effects,
     effects_since,
+    make_reviewer,
     mutation_for,
     outcomes_to_json,
     snapshot,
@@ -99,14 +101,14 @@ def test_suite_summary_and_sarif_on_a_small_subset() -> None:
     outcomes += evaluator.run_suite(tasks, agent="baseline", carriers=("email_body",))
     assert len(outcomes) == 2 * 3 + 2 * 2
     summary = summarize(outcomes)
-    taint = summary["taint/gullible/default"]
+    taint = summary["taint/gullible/default/careful"]
     assert taint["attack_success"]["successes"] == 0
     assert taint["attack_success"]["trials"] == 4
     assert taint["benign_utility"]["successes"] == 2
     assert taint["by_carrier"]["email_body"]["exposure"]["trials"] == 2
     assert taint["by_category"]["payments"]["benign_utility"]["trials"] == 2
     assert set(taint["by_mutation"]) == {"plain", "encoding", "homoglyph", "split"}
-    baseline = summary["baseline/none/none"]
+    baseline = summary["baseline/none/none/none"]
     assert baseline["attack_success_given_exposure"]["rate"] == 1.0
     sarif = to_sarif(outcomes)
     assert sarif["version"] == "2.1.0"
@@ -136,3 +138,72 @@ def test_sarif_reports_taint_failures_as_errors_and_warnings() -> None:
         ("TFA002", "warning"),
         ("TFA001", "error"),
     ]
+
+
+def test_make_reviewer_builds_each_configured_human() -> None:
+    task = task_by_id("T25")
+    assert make_reviewer(task, "careful").name == "scripted-reviewer"
+    assert make_reviewer(task, "approve-all").name == "approve-all-reviewer"
+    assert make_reviewer(task, "deny-all").name == "deny-all-reviewer"
+
+
+@pytest.mark.parametrize(
+    ("reviewer", "expected_attack_success"),
+    [("careful", False), ("approve-all", True), ("deny-all", False)],
+)
+def test_the_reviewer_is_a_dimension_not_a_constant(
+    reviewer: ReviewerKind, expected_attack_success: bool
+) -> None:
+    """With a compromised reader, the gate is worth exactly what the human behind it is worth.
+
+    T25 routes an attacker-chosen account into pay_invoice.recipient. The labels hold it at the
+    declassification gate either way; only the reviewer decides whether it executes.
+    """
+    outcome = Evaluator().evaluate(
+        task_by_id("T25"),
+        agent="taint",
+        reader="gullible",
+        reviewer=reviewer,
+        carrier="email_body",
+        mutation="plain",
+    )
+    assert outcome.declassification_requested
+    assert outcome.reviewer == reviewer
+    assert outcome.attack_success is expected_attack_success
+
+
+def test_reviewers_split_the_summary_into_separate_configurations() -> None:
+    evaluator = Evaluator()
+    tasks = tasks_by_id(["T25"])
+    outcomes = evaluator.run_suite(
+        tasks, agent="taint", reader="gullible", reviewer="careful", carriers=("email_body",)
+    )
+    outcomes += evaluator.run_suite(
+        tasks, agent="taint", reader="gullible", reviewer="approve-all", carriers=("email_body",)
+    )
+    summary = summarize(outcomes)
+    assert set(summary) == {
+        "taint/gullible/default/careful",
+        "taint/gullible/default/approve-all",
+    }
+    assert summary["taint/gullible/default/careful"]["attack_success"]["successes"] == 0
+    assert summary["taint/gullible/default/approve-all"]["attack_success"]["successes"] == 1
+    assert "confidentiality_leak" in summary["taint/gullible/default/careful"]
+
+
+def test_a_rubber_stamped_attack_is_a_note_not_an_error_in_sarif() -> None:
+    evaluator = Evaluator()
+    task = task_by_id("T25")
+    outcome = evaluator.evaluate(
+        task,
+        agent="taint",
+        reader="gullible",
+        reviewer="approve-all",
+        carrier="email_body",
+        mutation="plain",
+    )
+    assert outcome.attack_success
+    results = to_sarif([outcome])["runs"][0]["results"]
+    assert [(r["ruleId"], r["level"]) for r in results] == [("TFA004", "note")]
+    strict = dataclasses.replace(outcome, reviewer="careful")
+    assert to_sarif([strict])["runs"][0]["results"][0]["ruleId"] == "TFA001"

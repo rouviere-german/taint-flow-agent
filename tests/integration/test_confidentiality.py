@@ -15,6 +15,7 @@ from taint_flow_agent.dual.agent import RunReport, TaintFlowAgent
 from taint_flow_agent.dual.planner import ScriptedPlanner
 from taint_flow_agent.dual.reader import ScriptedReader
 from taint_flow_agent.env.workspace import USER, Workspace, make_workspace
+from taint_flow_agent.evaluation.suite import Effect, Snapshot, confidentiality_leaks, snapshot
 from taint_flow_agent.ifc.trusted import TrustedText
 from taint_flow_agent.policy.declassify import (
     ApproveAllReviewer,
@@ -95,3 +96,16 @@ def test_content_to_a_principal_inside_the_reader_set_is_not_held() -> None:
 def test_plan_constants_are_public_and_flow_anywhere() -> None:
     plan = f'send_email(to="{OUTSIDER}", subject="hello", body="text the user wrote")\n'
     assert run(plan, decider=DenyAllReviewer()).status == "completed"
+
+
+def test_the_benchmark_counts_a_leak_when_it_happens() -> None:
+    workspace = make_workspace()
+    before = snapshot(workspace)
+    private = workspace.files["q3-report.txt"].content
+    leaked = Effect("send_email", {"to": OUTSIDER, "subject": "fyi", "body": private})
+    kept = Effect("send_email", {"to": USER, "subject": "fyi", "body": private})
+    public = Effect("send_email", {"to": OUTSIDER, "subject": "fyi", "body": "nothing private"})
+    assert confidentiality_leaks(before, [leaked]) == [leaked]
+    assert confidentiality_leaks(before, [kept]) == []
+    assert confidentiality_leaks(before, [public]) == []
+    assert confidentiality_leaks(Snapshot(0, 0, 0, 0, {}), [leaked]) == []

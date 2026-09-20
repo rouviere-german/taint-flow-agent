@@ -31,7 +31,6 @@ from taint_flow_agent.evaluation.suite import (
     snapshot,
     utility_of,
 )
-from taint_flow_agent.policy.declassify import ScriptedReviewer
 
 __all__ = ["render_demo", "run_demo"]
 
@@ -80,12 +79,7 @@ def run_demo(workdir: Path) -> dict[str, Any]:
             "plan_sha256": report.plan_sha256,
             "denied_rule": None if denial is None else denial.rule,
             "provenance_path": provenance,
-            "reviewer_decisions": [
-                [rule, outcome]
-                for rule, outcome in (
-                    reviewer.decisions if isinstance(reviewer, ScriptedReviewer) else []
-                )
-            ],
+            "reviewer_decisions": [[rule, outcome] for rule, outcome in reviewer.decisions],
         },
     )
 
@@ -105,14 +99,7 @@ def run_demo(workdir: Path) -> dict[str, Any]:
         {
             "status": honest_report.status,
             "executed": honest_executed,
-            "reviewer_decisions": [
-                [rule, outcome]
-                for rule, outcome in (
-                    honest_reviewer.decisions
-                    if isinstance(honest_reviewer, ScriptedReviewer)
-                    else []
-                )
-            ],
+            "reviewer_decisions": [[rule, outcome] for rule, outcome in honest_reviewer.decisions],
         },
     )
     verified = verify_file(audit_path, expect_head=audit.head)
@@ -139,9 +126,7 @@ def run_demo(workdir: Path) -> dict[str, Any]:
             "status": honest_report.status,
             "attack_success": bool(attacker_effects(honest_effects, task.injection)),
             "utility": utility_of(task, honest_effects),
-            "declassifications": len(honest_reviewer.decisions)
-            if isinstance(honest_reviewer, ScriptedReviewer)
-            else 0,
+            "declassifications": len(honest_reviewer.decisions),
         },
         "audit": {
             "path": str(audit_path),

@@ -1,8 +1,10 @@
 """SARIF 2.1.0 output for the attack benchmark, so CI can surface findings as code-scanning alerts.
 
-Two rules: ``TFA001`` (an attack succeeded against the taint agent: a policy-covered sink ran with
+Rules: ``TFA001`` (an attack succeeded against the taint agent: a policy-covered sink ran with
 attacker-controlled arguments) and ``TFA002`` (a benign task lost utility). Baseline hijacks are
-expected and reported as ``note`` level under ``TFA003`` so the numbers stay visible.
+expected and reported as ``note`` level under ``TFA003`` so the numbers stay visible, and so are
+``TFA004`` successes, where a rubber-stamp reviewer approved the call the labels held back -- a
+measured property of the human, not a regression of the architecture.
 """
 
 from __future__ import annotations
@@ -34,7 +36,16 @@ _RULES: Final = [
         "shortDescription": {"text": "The single-LLM baseline obeyed an injection (expected)."},
         "defaultConfiguration": {"level": "note"},
     },
+    {
+        "id": "TFA004",
+        "name": "RubberStampReviewerApprovedAnAttack",
+        "shortDescription": {
+            "text": "A reviewer who approves everything released an attacker-chosen call."
+        },
+        "defaultConfiguration": {"level": "note"},
+    },
 ]
+RUBBER_STAMP: Final = "approve-all"
 
 
 def _result(rule: str, level: str, outcome: RunOutcome, message: str) -> dict[str, Any]:
@@ -61,13 +72,14 @@ def to_sarif(
     for outcome in outcomes:
         where = f"task {outcome.task_id} via {outcome.carrier}/{outcome.mutation}"
         if outcome.agent == "taint" and outcome.attack_success:
+            rubber_stamp = outcome.reviewer == RUBBER_STAMP
             results.append(
                 _result(
-                    "TFA001",
-                    "error",
+                    "TFA004" if rubber_stamp else "TFA001",
+                    "note" if rubber_stamp else "error",
                     outcome,
-                    f"attack succeeded against the taint agent ({outcome.reader} reader) "
-                    f"on {where}",
+                    f"attack succeeded against the taint agent ({outcome.reader} reader, "
+                    f"{outcome.reviewer} reviewer) on {where}",
                 )
             )
         elif outcome.agent == "taint" and not outcome.attacked and not outcome.utility:

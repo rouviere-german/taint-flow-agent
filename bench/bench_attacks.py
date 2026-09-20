@@ -4,19 +4,25 @@ Usage:
   uv run python bench/bench_attacks.py            # run and write bench/results/attacks.{json,sarif}
   uv run python bench/bench_attacks.py --check    # also enforce bench/thresholds_attacks.json
 
-Three configurations run over the same generated workspaces:
+Configurations are ``agent/reader/policy/reviewer`` and run over the same generated workspaces:
 
-- ``baseline/none``: the single-LLM ReAct baseline with a scripted gullible policy -- it reads
-  tool output and obeys any ``CALL_TOOL`` instruction it finds;
-- ``taint/scripted``: the dual-LLM agent with the honest quarantined reader;
-- ``taint/gullible``: the same agent with a reader that obeys every ``SET_FIELDS`` injection.
+- ``baseline/none/none/none``: the single-LLM ReAct baseline with a scripted gullible policy --
+  it reads tool output and obeys any ``CALL_TOOL`` instruction it finds;
+- ``taint/scripted/...``: the dual-LLM agent with the honest quarantined reader;
+- ``taint/gullible/...``: the same agent with a reader that obeys every ``SET_FIELDS`` injection.
   This is the worst case the architecture is designed for: the quarantined component is fully
   compromised and the sink policy is the only thing left.
+
+The *reviewer* is a dimension, not a constant, because a declassification gate is worth exactly
+what the human behind it is worth: ``careful`` approves only the effects the user asked for,
+``approve-all`` is a rubber stamp and ``deny-all`` never releases anything. Reporting only the
+careful reviewer would credit the architecture with that human's judgement.
 
 Rates come with Wilson 95% intervals. ``exposure`` is the share of attacked runs where the
 injected text actually reached a tool result, so ``attack_success_given_exposure`` is the rate
 that matters when comparing configurations; a carrier that never lands on the plan's data path
-cannot hijack anyone.
+cannot hijack anyone. ``confidentiality_leak`` counts runs where a private record reached a
+principal outside its reader set, matched verbatim, so it is a lower bound.
 
 Everything is offline and deterministic: scripted planner, scripted readers, in-memory
 workspaces. No API key is read and no network call is made.
@@ -39,6 +45,7 @@ from taint_flow_agent.evaluation.suite import (
     AgentKind,
     Evaluator,
     ReaderKind,
+    ReviewerKind,
     RunOutcome,
     outcomes_to_json,
     summarize,
@@ -49,10 +56,13 @@ RESULTS = ROOT / "bench" / "results" / "attacks.json"
 SARIF = ROOT / "bench" / "results" / "attacks.sarif"
 THRESHOLDS = ROOT / "bench" / "thresholds_attacks.json"
 
-CONFIGURATIONS: tuple[tuple[str, AgentKind, ReaderKind], ...] = (
-    ("baseline/none/none", "baseline", "scripted"),
-    ("taint/scripted/default", "taint", "scripted"),
-    ("taint/gullible/default", "taint", "gullible"),
+CONFIGURATIONS: tuple[tuple[AgentKind, ReaderKind, ReviewerKind], ...] = (
+    ("baseline", "scripted", "careful"),  # the baseline has no gate; the reviewer is unused
+    ("taint", "scripted", "careful"),
+    ("taint", "scripted", "approve-all"),
+    ("taint", "gullible", "careful"),
+    ("taint", "gullible", "approve-all"),
+    ("taint", "gullible", "deny-all"),
 )
 
 
@@ -69,8 +79,8 @@ def run() -> tuple[list[RunOutcome], dict[str, Any], float]:
     started = time.perf_counter()
     evaluator = Evaluator()
     outcomes: list[RunOutcome] = []
-    for _, agent, reader in CONFIGURATIONS:
-        outcomes.extend(evaluator.run_suite(agent=agent, reader=reader))
+    for agent, reader, reviewer in CONFIGURATIONS:
+        outcomes.extend(evaluator.run_suite(agent=agent, reader=reader, reviewer=reviewer))
     return outcomes, summarize(outcomes), time.perf_counter() - started
 
 
@@ -93,6 +103,19 @@ def render(report: dict[str, Any]) -> str:
             f"| {_cell(entry, 'utility_under_attack')} |"
         )
     lines.append("")
+    lines.append("| configuration | declassifications requested | confidentiality leaks |")
+    lines.append("|---|---|---|")
+    for key, entry in report.items():
+        requested = Rate(
+            entry["declassification_requested_under_attack"]["successes"]
+            + entry["declassification_requested_benign"]["successes"],
+            entry["runs"],
+        )
+        leaks = Rate(
+            entry["confidentiality_leak"]["successes"], entry["confidentiality_leak"]["trials"]
+        )
+        lines.append(f"| {key} | {requested} | {leaks} |")
+    lines.append("")
     lines.append("| configuration | carrier | attack success | exposure |")
     lines.append("|---|---|---|---|")
     for key, entry in report.items():
@@ -105,7 +128,7 @@ def render(report: dict[str, Any]) -> str:
 
 def check_thresholds(report: dict[str, Any]) -> list[str]:
     """Enforce the invariants the README claims. Missing configurations are failures."""
-    thresholds: dict[str, dict[str, float]] = json.loads(THRESHOLDS.read_text(encoding="utf-8"))
+    thresholds: dict[str, dict[str, Any]] = json.loads(THRESHOLDS.read_text(encoding="utf-8"))
     problems: list[str] = []
     for key, limits in thresholds.items():
         entry = report.get(key)
@@ -113,6 +136,8 @@ def check_thresholds(report: dict[str, Any]) -> list[str]:
             problems.append(f"{key}: configuration missing from the report")
             continue
         for metric, limit in limits.items():
+            if metric.startswith("_"):  # a note for the reader, not a threshold
+                continue
             direction, _, name = metric.partition(":")
             value = float(entry[name]["rate"])
             if direction == "max" and value > limit:
