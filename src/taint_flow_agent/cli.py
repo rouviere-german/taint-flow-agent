@@ -34,11 +34,17 @@ def _serve(host: str | None, port: int | None) -> int:
     return 0
 
 
-def _demo(workdir: Path, as_json: bool) -> int:
+def _demo(workdir: Path | None, as_json: bool) -> int:
+    from taint_flow_agent.core.config import get_settings  # noqa: PLC0415
     from taint_flow_agent.core.logging import configure_logging  # noqa: PLC0415
     from taint_flow_agent.demo import render_demo, run_demo  # noqa: PLC0415
 
     configure_logging("WARNING", json_output=True, stream=sys.stderr)
+    # The demo writes an audit log, so it has to land where this deployment may write. In the
+    # image that is the tmpfs APP_DATA_DIR names (/tmp/var): the rootfs, including WORKDIR /app,
+    # is read-only. Locally data_dir defaults to `var`, so the path stays `var/demo`.
+    if workdir is None:
+        workdir = get_settings().data_dir / "demo"
     summary = run_demo(workdir)
     if as_json:
         print(json.dumps(summary, indent=2, sort_keys=True))
@@ -110,7 +116,12 @@ def main(argv: list[str] | None = None) -> int:
     demo = sub.add_parser(
         "demo", help="run the offline demo (baseline hijacked, taint agent blocks)"
     )
-    demo.add_argument("--workdir", type=Path, default=Path("var/demo"))
+    demo.add_argument(
+        "--workdir",
+        type=Path,
+        default=None,
+        help="where the demo writes its audit log (default: $APP_DATA_DIR/demo, i.e. var/demo)",
+    )
     demo.add_argument("--json", action="store_true", help="print the JSON summary only")
 
     run_task = sub.add_parser("run-task", help="run one benchmark task offline")

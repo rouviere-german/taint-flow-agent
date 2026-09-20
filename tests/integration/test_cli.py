@@ -157,6 +157,22 @@ def test_demo_exits_nonzero_when_the_claim_it_prints_stops_holding(
     assert json.loads(capsys.readouterr().out)["taint_gullible_reader"]["attack_success"] is True
 
 
+def test_demo_defaults_its_workdir_to_the_configured_data_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`docker run <image> demo` passes no --workdir, so the default has to be writable.
+
+    It used to be a relative `var/demo`, which under the image's read-only rootfs resolves to
+    /app/var and killed the command with `OSError: Read-only file system`. APP_DATA_DIR (the
+    tmpfs the image already points the service at) governs it instead; locally it stays var/demo.
+    """
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("APP_DATA_DIR", str(data_dir))
+    assert cli_main(["demo", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["audit"]["ok"] is True
+    assert (data_dir / "demo" / "audit.jsonl").is_file()
+
+
 def test_serve_starts_uvicorn_with_the_hardened_settings(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
