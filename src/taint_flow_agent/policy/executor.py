@@ -24,11 +24,11 @@ from typing import Any, final
 from pydantic import BaseModel, JsonValue
 
 from taint_flow_agent.agentic.audit import AuditLog
-from taint_flow_agent.agentic.errors import ToolArgumentError, ToolExecutionError
+from taint_flow_agent.agentic.errors import ToolArgumentError
 from taint_flow_agent.agentic.providers.base import ToolUseBlock
 from taint_flow_agent.agentic.tools import ToolRegistry
 from taint_flow_agent.core.logging import get_logger
-from taint_flow_agent.dsl.errors import PlanRuntimeError
+from taint_flow_agent.dsl.errors import PlanError, PlanRuntimeError
 from taint_flow_agent.dsl.interpreter import (
     CallDeniedError,
     CallHeldError,
@@ -98,9 +98,13 @@ class _BaseTable:
     def _execute(self, call: PendingCall, validated: Any) -> Labeled[Any]:
         try:
             result = validated.run(authorized_hash=validated.call_hash)
-        except (ToolExecutionError, Exception) as exc:  # noqa: BLE001 - a failing tool must not crash the run
+        except PlanError:
+            # The run's own control flow (denied, held, limit exceeded) is not a tool failure:
+            # swallowing it would turn a stopped run into a completed one.
+            raise
+        except Exception as exc:  # noqa: BLE001 - a failing tool must not crash the whole run
             # Details stay in the (redacted) log; the plan sees a generic, untrusted error value.
-            _log.warning("tool_failed", tool=call.name, error_type=type(exc).__name__)
+            _log.error("tool_failed", tool=call.name, error_type=type(exc).__name__)
             result = {"error": f"{call.name} failed"}
         return self._labelers[call.name](validated.args, result)
 

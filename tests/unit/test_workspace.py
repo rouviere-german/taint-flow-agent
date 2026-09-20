@@ -93,6 +93,26 @@ def test_queued_tool_errors_replace_one_result_with_untrusted_data() -> None:
     assert len(workspace.observed) == 5
 
 
+def test_an_injected_error_never_outlives_the_call_it_belongs_to() -> None:
+    """The flag that tells a labeler "this result is injected" belongs to exactly one call.
+
+    A caller that runs a handler without its labeler (the ReAct baseline does exactly that) must
+    not leave a flag behind that the next labeler consumes, which would mislabel a genuine,
+    trusted tool result as attacker-controlled text.
+    """
+    workspace = make_workspace()
+    registry, _ = workspace.build_tools()
+    workspace.queue_tool_error("get_balance", "temporary failure")
+
+    unlabeled = registry.validate_call(ToolUseBlock(id="c", name="get_balance", arguments={})).run()
+    assert unlabeled == {"error": "temporary failure"}
+
+    result, labeled = call(workspace, "get_balance")
+    assert result == {"balance": 25000.0}
+    assert labeled.label.integrity is Integrity.TRUSTED_TOOL
+    assert labeled.label.sources == {"tool:get_balance"}
+
+
 def test_handlers_mutate_state_and_search() -> None:
     workspace = make_workspace()
     workspace.add_email("dana@vendor.example", "Invoice 4471", "Amount: 1")

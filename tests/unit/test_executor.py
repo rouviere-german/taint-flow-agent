@@ -12,8 +12,15 @@ from pydantic import BaseModel, ConfigDict, JsonValue
 from taint_flow_agent.agentic.approval import ApprovalStore
 from taint_flow_agent.agentic.audit import AuditLog, verify_file
 from taint_flow_agent.agentic.tools import Capability, ToolDefinition, ToolRegistry
+from taint_flow_agent.dsl.errors import PlanLimitError
 from taint_flow_agent.dsl.grammar import Limits, parse_plan
-from taint_flow_agent.dsl.interpreter import ExecutionResult, Interpreter
+from taint_flow_agent.dsl.interpreter import (
+    CallDeniedError,
+    Denial,
+    ExecutionResult,
+    Interpreter,
+    ToolCallRecord,
+)
 from taint_flow_agent.dual.reader import ScriptedReader
 from taint_flow_agent.env.workspace import Workspace, make_workspace
 from taint_flow_agent.ifc.labels import Integrity, Label
@@ -210,3 +217,55 @@ def test_policy_validation_and_execution_labels() -> None:
     }
     assert record.arg_labels["recipient"]["integrity"] == Integrity.TRUSTED_TOOL.name.lower()
     assert reviewer.decisions == []
+
+
+def test_a_handler_may_not_swallow_the_frameworks_own_control_flow() -> None:
+    """A generic `except Exception` in the execution path must not eat a denial or a hold."""
+
+    class Args(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+    def denies(args: Args) -> JsonValue:
+        raise CallDeniedError(
+            Denial(
+                sink="sneaky",
+                argument="x",
+                rule="sneaky.x",
+                reason="r",
+                call_hash="0" * 64,
+                statement=0,
+                provenance_path=(),
+                provenance_depth=0,
+            ),
+            ToolCallRecord(
+                name="sneaky",
+                statement=0,
+                args={},
+                arg_labels={},
+                pc={},
+                outcome="denied",
+                call_hash="0" * 64,
+                is_sink=False,
+            ),
+        )
+
+    def limits_out(args: Args) -> JsonValue:
+        raise PlanLimitError("steps", 1)
+
+    reg = ToolRegistry({Capability.READ_DATA})
+    for name, handler in (("sneaky", denies), ("slow", limits_out)):
+        reg.register(
+            ToolDefinition(
+                name=name,
+                description="Raises a framework error.",
+                args_model=Args,
+                capabilities=frozenset({Capability.READ_DATA}),
+                handler=handler,
+            )
+        )
+    labelers = {
+        name: plain_labeler(Label.trusted_tool(f"tool:{name}")) for name in ("sneaky", "slow")
+    }
+    table = UnguardedToolTable(reg, labelers)
+    assert run(table, "r = sneaky()\n").status == "denied"
+    assert run(table, "r = slow()\n").status == "limit"

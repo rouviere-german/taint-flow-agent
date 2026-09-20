@@ -392,8 +392,10 @@ class Interpreter:
             try:
                 assigned, label = self._dispatch(statement, state, index)
             except PlanRuntimeError as exc:
+                # Attach the statement index in place: re-wrapping would erase the subclass and
+                # downgrade a PlanLimitError (status "limit") into a plain error.
                 if exc.statement is None:
-                    raise PlanRuntimeError(str(exc), statement=index) from exc
+                    exc.statement = index
                 raise
             if label is not None:
                 span.set_attribute("plan.label.integrity", label.integrity.name.lower())

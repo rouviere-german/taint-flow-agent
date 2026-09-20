@@ -301,19 +301,22 @@ class Workspace:
     # ------------------------------------------------------------------- tool handlers
 
     def _serve(self, tool: str, result: JsonValue) -> JsonValue:
-        """Apply a queued tool error, then record what the agent observed (for the benchmark)."""
+        """Apply a queued tool error, then record what the agent observed (for the benchmark).
+
+        The injection flag is (re)set on every call, so it describes this result only: a caller
+        that runs a handler without its labeler cannot leave a flag for the next call to consume.
+        """
         injected = self.tool_errors.pop(tool, None)
+        self._injected_error = None if injected is None else tool
         if injected is not None:
-            self._injected_error = tool
             result = {"error": injected}
         self.observed.append(canonical_json(result))
         return result
 
     def _take_injected(self, tool: str) -> bool:
-        if self._injected_error == tool:
-            self._injected_error = None
-            return True
-        return False
+        """Whether the result this labeler is about to label came from a queued tool error."""
+        pending, self._injected_error = self._injected_error, None
+        return pending == tool
 
     def _find_email(self, email_id: str) -> Email | None:
         return next((e for e in self.inbox if e.id == email_id), None)
