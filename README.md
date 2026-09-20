@@ -334,9 +334,13 @@ noisy; they catch order-of-magnitude regressions, not drift.
 
 ### Test suite
 
+```bash
+uv run python tasks.py test
+# 973 passed, 1 skipped in 60s   |   coverage 98.01% (floor 85%)
 ```
-973 passed, 1 skipped in 69s   |   coverage 98.04% (floor 85%)
-```
+
+Test order is randomised per run (`pytest-randomly`), so the total moves by a few hundredths of a
+point between runs; the floor enforced in CI is 85%.
 
 Property tests (hypothesis) cover the lattice laws (associativity, commutativity, idempotence,
 monotonicity of `join`), "the derived label dominates the join of its inputs", the fine-grained
