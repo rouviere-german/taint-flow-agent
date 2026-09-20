@@ -1,0 +1,4 @@
+{
+  "pc_blind": {"min_rules_killed": 15},
+  "default": {"min_rules_killed": 14, "expected_survivors": ["call_args_join_pc"]}
+}

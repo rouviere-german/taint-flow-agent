@@ -1,0 +1,11 @@
+{
+  "redact_text_1kb": {"p95_us": 3000},
+  "rate_limiter_check": {"p95_us": 50},
+  "llm_request_sha256_10_messages": {"p95_us": 2000},
+  "audit_append_fsync": {"p95_us": 60000},
+  "audit_verify_1000_entries": {"p95_us": 400000},
+  "label_join": {"p95_us": 50},
+  "plan_parse_and_whitelist": {"p95_us": 3000},
+  "policy_decision": {"p95_us": 150},
+  "task_run_end_to_end": {"p95_us": 150000}
+}
