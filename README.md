@@ -300,8 +300,10 @@ The controls, in short:
   canary tests run the whole agent with unique markers in every untrusted field and assert that no
   planner request ever contains one.
 - **Interpreter containment.** Node-type allowlist, depth/size/statement/string limits, step and
-  loop caps, a wall-clock deadline, and no `eval`/`exec` anywhere (banned repo-wide by semgrep and
-  by a test that greps the package).
+  loop caps, a wall-clock deadline, and no `eval`/`exec`/`compile`/`__import__` anywhere in `src/`,
+  `bench/` or `scripts/` -- checked locally by `tests/unit/test_no_dynamic_code.py` (with positive
+  controls, so the grep cannot rot) and repo-wide in CI by semgrep. A source that nests deeper than
+  CPython's own parser can handle is rejected as a plan error, not raised as a `RecursionError`.
 - **Quarantined reader.** No tools, closed schemas, length-bounded output, truncated input. It
   cannot name a tool, because its output is validated against a schema that has no such field.
 - **Deny-by-default sink policy** validated at startup; `/readyz` reports not-ready on an invalid
