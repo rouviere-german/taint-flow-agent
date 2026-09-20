@@ -35,9 +35,14 @@ Numbers come from `uv run python tasks.py bench` on the machine named in the REA
 3. **Every value carries its provenance, and every sink call is checked against it.** Labels join
    on every operation, including through branches and loops (implicit flows). A sink with no policy
    entry is denied. A denial records the provenance path of the argument it refused.
-4. **A compromised quarantined reader cannot cause an attacker-chosen side effect at a protected
-   sink.** Measured over 200 attacked runs with a reader that obeys every injection: 0 successes.
-   The same number for a single-LLM ReAct baseline is 73 of the 73 runs that exposed it.
+4. **A compromised quarantined reader cannot reach a protected sink without a human approving
+   that exact call.** Measured over 200 attacked runs with a reader that obeys every injection and
+   a careful reviewer: 0 successes; the same number for a single-LLM ReAct baseline is 73 of the 73
+   runs that exposed it. The qualifier is load-bearing and is measured, not assumed: the same 200
+   runs with a reviewer that rubber-stamps every declassification request give **6 successes**
+   (three attacker payments, three attacker contacts). The architecture turns "attacker controls an
+   action" into "attacker must obtain one specific human approval, with the provenance path shown";
+   it does not remove the human.
 5. **Every label-propagation rule is load-bearing.** Switching any one of the fifteen off lets a
    probe or attack case through under the pc-blind policy; CI fails if that stops being true.
 6. **Declassification is a human decision bound to one call.** The approval covers the canonical
@@ -61,25 +66,36 @@ Stated plainly, because a security claim without its limits is marketing.
    e-mail body carry untrusted content once the recipient is trusted. An attacker who gets text
    into a body a human will read is not stopped by an information-flow label.
 3. **A plausible wrong value in an unprotected argument is undetectable.** With a compromised
-   reader, 12 of 200 attacked runs completed with content the attacker chose but that every policy
-   rule permitted — a different amount, a different summary. Labels say where a value came from,
-   not whether it is true.
-4. **Side channels are out of scope.** Timing, which error was raised, resource use, and the
+   reader and a careful reviewer, 9 of 200 attacked runs completed with content the attacker chose
+   but that every policy rule permitted — a different amount, a different summary. Labels say where
+   a value came from, not whether it is true.
+4. **The gate is only as good as the reviewer.** The rules that protect the highest-stakes
+   arguments fail to `declassify`, not to `deny`, so the last step is a human decision. A reviewer
+   who approves every request gives an attacker 6 successes in 200 attacked runs; a reviewer who
+   denies every request gives zero and costs 55 points of benign utility. Both ends are measured
+   and both are in the README table.
+5. **Confidentiality is enforced at the gate, not by refusal.** `send_email.subject`/`.body`
+   require the recipient to be in the data's reader set and fail to `declassify` when it is not, so
+   a private record leaving its reader set always reaches a human first — but a human who approves
+   it releases it. Across 240 runs, 19 verbatim leaks occurred with an approving reviewer and 0
+   with a refusing one. The leak count is a lower bound: it matches verbatim fragments only, so a
+   summarised or reformatted value is not counted even though its label says it is derived.
+6. **Side channels are out of scope.** Timing, which error was raised, resource use, and the
    observable fact that a run was denied all leak something about untrusted data. The pc label
    covers implicit flows *inside* the interpreter, not what an outside observer learns.
-5. **Availability under attack is traded away.** An injection planted in a tool's error text stops
+7. **Availability under attack is traded away.** An injection planted in a tool's error text stops
    37 of 200 runs with `status=error`. The agent refuses to act rather than acting on injected
    content; that is the intended behaviour and it is a denial of service.
-6. **Implicit-flow tracking is conservative and incomplete.** Raising the pc over a whole branch
+8. **Implicit-flow tracking is conservative and incomplete.** Raising the pc over a whole branch
    denies runs a perfect analysis would allow. Conversely, the mutation study shows each rule is
    *necessary*, not that the rule set is *sufficient*.
-7. **List ordering is not labelled.** Selecting `emails[0]` picks whichever element the tool put
+9. **List ordering is not labelled.** Selecting `emails[0]` picks whichever element the tool put
    first; influence over ordering does not show up as a label on the selected element
    (see `docs/adr/0004-fine-grained-per-element-labels.md`).
-8. **Offline results measure the architecture, not planner quality.** The benchmark's scripted
+10. **Offline results measure the architecture, not planner quality.** The benchmark's scripted
    planner always writes the reference plan. Benign utility of 100% says nothing about how well a
    real model plans.
-9. **Nothing here has been deployed against a real mail server, payment rail or file system.**
+11. **Nothing here has been deployed against a real mail server, payment rail or file system.**
    Every tool is an in-memory simulation.
 
 ## How this repository is hardened
@@ -89,7 +105,7 @@ Stated plainly, because a security claim without its limits is marketing.
 - Design trade-offs are recorded in [docs/adr/](docs/adr/).
 - CI runs ruff, mypy --strict, pytest with a coverage floor, bandit, semgrep (registry packs plus
   `.semgrep/rules.yml`, which bans `eval`/`exec` and unsafe YAML loading repo-wide), pip-audit,
-  gitleaks, a trivy image scan, a syft CycloneDX SBOM, the 720-run attack benchmark (uploaded as
+  gitleaks, a trivy image scan, a syft CycloneDX SBOM, the 1440-run attack benchmark (uploaded as
   SARIF) and the propagation-rule mutation study.
 - Secrets come only from the environment; only `.env.example` is committed. The tests, the demo
   and every benchmark run without an API key and without network access.

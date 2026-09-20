@@ -7,7 +7,7 @@ Targets:
   format     ruff format + ruff check --fix
   typecheck  mypy --strict (configured in pyproject.toml)
   test       pytest with coverage (fails under the floor in pyproject.toml)
-  bench      micro-benchmarks, the 720-run attack suite and the mutation study, all with
+  bench      micro-benchmarks, the 1440-run attack suite and the mutation study, all with
              regression thresholds (bench/thresholds*.json)
   demo       offline demo: one malicious e-mail hijacks the baseline and is blocked here
   bandit     bandit static analysis of src/

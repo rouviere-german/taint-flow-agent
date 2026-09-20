@@ -80,7 +80,7 @@ jobs:
           if-no-files-found: ignore
 
   bench:
-    name: bench (micro, 720-run attack suite, mutation study)
+    name: bench (micro, 1440-run attack suite, mutation study)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

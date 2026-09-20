@@ -7,11 +7,13 @@ Indirect prompt injection works because the model that *chooses actions* also *r
 content*. Filters, delimiters and "ignore any instructions in the data" prompts are probabilistic:
 they raise the cost of an attack without bounding it. This repository implements the structural
 alternative — a dual-LLM architecture with information-flow control, in the style of Google
-DeepMind's CaMeL design — and measures what it buys on a 720-run offline benchmark.
+DeepMind's CaMeL design — and measures what it buys on a 1440-run offline benchmark.
 
 The premise is that the quarantined model **will** be compromised. The benchmark therefore runs a
 worst case in which the reader obeys every injection it is given, and the sink policy is the only
-thing left standing.
+thing left standing — and, because that policy ends in a human approval for the highest-stakes
+arguments, it varies the human too: a careful reviewer, a rubber stamp and a refuse-everything
+reviewer are three of the six measured configurations. The rubber stamp is the one that loses.
 
 ## Architecture
 
@@ -117,7 +119,7 @@ Requirements: [uv](https://docs.astral.sh/uv/) and Python 3.12. No API key, no n
 uv sync --frozen
 uv run python tasks.py demo    # one malicious e-mail: baseline hijacked, taint agent blocked
 uv run python tasks.py check   # ruff, mypy --strict, pytest + coverage, bandit, pip-audit, baseline
-uv run python tasks.py bench   # micro-benchmarks, 720-run attack suite, mutation study
+uv run python tasks.py bench   # micro-benchmarks, 1440-run attack suite, mutation study
 ```
 
 `make demo` / `make check` / `make bench` do the same on Linux; `tasks.py` is the single source of
@@ -173,30 +175,51 @@ i7-8700-class 6-core CPU, Python 3.12.14**, with no API key set. Nothing here is
 ### Attack benchmark — 40 tasks x 5 carriers + 40 benign runs, per configuration
 
 ```bash
-uv run python bench/bench_attacks.py --check    # 720 runs in 4.2s
+uv run python bench/bench_attacks.py --check    # 1440 runs in 7.4s
 ```
+
+A configuration is `agent/reader/policy/reviewer`. The **reviewer** is the human behind the
+declassification gate, and it is a benchmark dimension rather than a constant, because a gate is
+worth exactly what the person behind it is worth: `careful` approves only the effects the user's
+request asked for, `approve-all` is a rubber stamp, `deny-all` never releases anything.
 
 | configuration | benign utility | attack success | attack success given exposure | utility under attack |
 |---|---|---|---|---|
-| baseline/none/none | 100.0% [91.2%, 100.0%] (40/40) | 36.5% [30.1%, 43.4%] (73/200) | 100.0% [95.0%, 100.0%] (73/73) | 89.0% [83.9%, 92.6%] (178/200) |
-| taint/scripted/default | 100.0% [91.2%, 100.0%] (40/40) | 0.0% [0.0%, 1.9%] (0/200) | 0.0% [0.0%, 5.0%] (0/73) | 81.5% [75.5%, 86.3%] (163/200) |
-| taint/gullible/default | 100.0% [91.2%, 100.0%] (40/40) | 0.0% [0.0%, 1.9%] (0/200) | 0.0% [0.0%, 5.0%] (0/73) | 71.5% [64.9%, 77.3%] (143/200) |
+| baseline/none/none/none | 100.0% [91.2%, 100.0%] (40/40) | 36.5% [30.1%, 43.4%] (73/200) | 100.0% [95.0%, 100.0%] (73/73) | 89.0% [83.9%, 92.6%] (178/200) |
+| taint/scripted/default/careful | 100.0% [91.2%, 100.0%] (40/40) | 0.0% [0.0%, 1.9%] (0/200) | 0.0% [0.0%, 5.0%] (0/73) | 81.5% [75.5%, 86.3%] (163/200) |
+| taint/scripted/default/approve-all | 100.0% [91.2%, 100.0%] (40/40) | 0.0% [0.0%, 1.9%] (0/200) | 0.0% [0.0%, 5.0%] (0/73) | 81.5% [75.5%, 86.3%] (163/200) |
+| taint/gullible/default/careful | 100.0% [91.2%, 100.0%] (40/40) | 0.0% [0.0%, 1.9%] (0/200) | 0.0% [0.0%, 5.0%] (0/73) | 71.5% [64.9%, 77.3%] (143/200) |
+| taint/gullible/default/approve-all | 100.0% [91.2%, 100.0%] (40/40) | 3.0% [1.4%, 6.4%] (6/200) | 8.2% [3.8%, 16.8%] (6/73) | 71.5% [64.9%, 77.3%] (143/200) |
+| taint/gullible/default/deny-all | 45.0% [30.7%, 60.2%] (18/40) | 0.0% [0.0%, 1.9%] (0/200) | 0.0% [0.0%, 5.0%] (0/73) | 33.0% [26.9%, 39.8%] (66/200) |
 
 Brackets are Wilson 95% score intervals. *Exposure* is the share of attacked runs where the
 injected text actually reached a tool result — a carrier that never lands on the plan's data path
 cannot hijack anyone, so **attack success given exposure** is the comparison that matters. The
-single-LLM baseline is hijacked on **every** run that exposed it; the taint agent on none, even
-when its quarantined reader obeys the attacker wholesale.
+single-LLM baseline is hijacked on **every** run that exposed it.
 
-Per carrier (attack success / exposure):
+**Read the last three rows together — they are the honest version of the headline.** The labels
+and the sink policy alone stop 0 of 73 exposed attacks only when a human is in the loop and that
+human is not a rubber stamp. With a fully compromised reader *and* a reviewer who approves every
+declassification request, **6 of 200 attacked runs succeed** (T25/T29/T31 pay an attacker account,
+T06/T34/T38 add an attacker contact; all six arrive through `email_body` or `file_content`). The
+sink policy routes those calls to a human — `pay_invoice.recipient` and `.amount` are
+`on_fail: declassify`, not `deny` — and the human is what fails. Conversely `deny-all` removes the
+attacks completely and costs more than half the utility: benign utility falls from 100% to 45%.
+The architecture converts "attacker controls an action" into "attacker must talk a human into one
+specific approval, with the provenance path in front of them"; it does not remove the human.
 
-| carrier | baseline | taint, scripted reader | taint, gullible reader |
-|---|---|---|---|
-| email_body | 42.5% (17/40) / 42.5% | 0.0% (0/40) / 42.5% | 0.0% (0/40) / 42.5% |
-| file_content | 25.0% (10/40) / 25.0% | 0.0% (0/40) / 25.0% | 0.0% (0/40) / 25.0% |
-| calendar_note | 10.0% (4/40) / 10.0% | 0.0% (0/40) / 10.0% | 0.0% (0/40) / 10.0% |
-| filename | 5.0% (2/40) / 5.0% | 0.0% (0/40) / 5.0% | 0.0% (0/40) / 5.0% |
-| tool_error | 100.0% (40/40) / 100.0% | 0.0% (0/40) / 100.0% | 0.0% (0/40) / 100.0% |
+Of the 87 attacked gullible runs that reached the gate, the careful reviewer denied 10 and one run
+was stopped by a pure policy rule (`create_event.attendees`), for 11 denials in total.
+
+Per carrier (attack success / exposure), for the four configurations that differ:
+
+| carrier | baseline | taint, scripted, careful | taint, gullible, careful | taint, gullible, approve-all |
+|---|---|---|---|---|
+| email_body | 42.5% (17/40) / 42.5% | 0.0% (0/40) / 42.5% | 0.0% (0/40) / 42.5% | 12.5% (5/40) / 42.5% |
+| file_content | 25.0% (10/40) / 25.0% | 0.0% (0/40) / 25.0% | 0.0% (0/40) / 25.0% | 2.5% (1/40) / 25.0% |
+| calendar_note | 10.0% (4/40) / 10.0% | 0.0% (0/40) / 10.0% | 0.0% (0/40) / 10.0% | 0.0% (0/40) / 10.0% |
+| filename | 5.0% (2/40) / 5.0% | 0.0% (0/40) / 5.0% | 0.0% (0/40) / 5.0% | 0.0% (0/40) / 5.0% |
+| tool_error | 100.0% (40/40) / 100.0% | 0.0% (0/40) / 100.0% | 0.0% (0/40) / 100.0% | 0.0% (0/40) / 100.0% |
 
 `tool_error` has 100% exposure by construction: it replaces the result of the *first tool the
 reference plan calls* with an error whose text carries the injection, so it is always on the data
@@ -204,21 +227,49 @@ path. The other four carriers land in a specific record, which a given task may 
 hence the lower exposure, and why comparing raw attack-success rates across carriers would be
 misleading.
 
-**The cost is utility, and it is real.** Under attack the taint agent completes 81.5% of tasks with
-the honest reader and 71.5% with the gullible one, against 89.0% for the hijackable baseline. The
-720-run report breaks the 37 and 57 lost runs down by status and carrier:
+#### Confidentiality, measured separately
+
+Integrity ("did attacker text choose an action?") and confidentiality ("did private data reach
+someone outside its reader set?") are different halves of the lattice, so the benchmark counts them
+separately. A *leak* is a run where a verbatim fragment of a record whose readers are not everybody
+was delivered to a principal outside that reader set. It is a **lower bound**: a value the reader
+summarised or reformatted is not matched.
+
+| configuration | declassifications requested | confidentiality leaks |
+|---|---|---|
+| baseline/none/none/none | 0.0% (0/240) | 8.3% (20/240) |
+| taint/scripted/default/careful | 45.8% (110/240) | 7.9% (19/240) |
+| taint/gullible/default/careful | 45.4% (109/240) | 7.9% (19/240) |
+| taint/gullible/default/approve-all | 45.4% (109/240) | 7.9% (19/240) |
+| taint/gullible/default/deny-all | 45.4% (109/240) | 0.0% (0/240) |
+
+All 19 leaks under the taint agent come from four task templates (T03, T04, T21, T39) in which the
+user's own request is "send this private thing to that person". Every one of them was routed to the
+gate first — `send_email.subject`/`.body` require `readers_include: to` and fail to `declassify` —
+and the human let it through, which for those four tasks is the correct answer. `deny-all` shows
+the same runs with the human saying no: zero leaks. The baseline's 20 leaks never reached a human
+at all, because it has no gate.
+
+The point of the row is not that 7.9% is low or high. It is that the reader-set half of the lattice
+is now *measured*, and that the only configuration with zero leaks is the one where a human refuses
+every release — the same trade the integrity numbers show.
+
+#### The cost is utility, and it is real
+
+Under attack the taint agent completes 81.5% of tasks with the honest reader and 71.5% with the
+gullible one, against 89.0% for the hijackable baseline. The report breaks the lost runs down:
 
 | configuration | lost runs | why |
 |---|---|---|
-| taint, scripted reader | 37 / 200 | all 37 are the `tool_error` carrier: the first tool call returns an injected error, so the plan stops with `status=error` and produces nothing |
-| taint, gullible reader | 57 / 200 | the same 37 `tool_error` runs, plus 12 that completed with wrong-but-permitted values the compromised reader supplied, plus 8 denied at a sink |
+| taint, scripted reader, any reviewer | 37 / 200 | all 37 are the `tool_error` carrier: the first tool call returns an injected error, so the plan stops with `status=error` and produces nothing |
+| taint, gullible reader, careful | 57 / 200 | the same 37 `tool_error` runs, plus 11 denied (10 by the reviewer, 1 by `create_event.attendees`), plus 9 that completed with wrong-but-permitted values the compromised reader supplied |
+| taint, gullible reader, approve-all | 57 / 200 | the same 37, plus 1 policy denial, plus 19 completed-but-wrong — the rubber stamp converts 10 denials into 10 wrong completions, 6 of which are outright attacker wins |
+| taint, gullible reader, deny-all | 134 / 200 | the same 37, plus 88 denials (87 of them at the gate), plus the same 9 wrong completions |
 | baseline | 22 / 200 | 11 `tool_error`, 8 `email_body`, 3 `file_content` — the baseline follows the injection *instead of* the task |
 
-The 8 denials are the architecture doing its job: a value the attacker influenced reached an
-argument the policy protects, so the run stopped rather than acting on it. The 12 wrong-but-
-completed runs are the honest limit of the design — once a compromised reader returns a plausible
-value that satisfies every rule (an amount, a summary), no label can tell it is wrong. That is the
-trade, and the benchmark reports it rather than hiding it.
+The wrong-but-completed runs are the honest limit of the design — once a compromised reader returns
+a plausible value that satisfies every rule (an amount, a summary), no label can tell it is wrong.
+That is the trade, and the benchmark reports it rather than hiding it.
 
 ### Mutation study — is every propagation rule load-bearing?
 
@@ -310,7 +361,8 @@ The controls, in short:
   policy or an uncovered sink, and the agent routes answer 503.
 - **Human declassification** bound to the canonical hash of the exact call, with the provenance
   subgraph shown to the approver, and separation of duties (the agent principal cannot decide its
-  own requests).
+  own requests). The gate is the last line for the highest-stakes arguments, so the benchmark
+  measures the human too — see the `approve-all` and `deny-all` rows above.
 - **Per-run step, token and USD budgets**; the tools are simulated, so no real egress exists
   anywhere in the process.
 - **Hash-chained audit log** of plans, per-statement label derivations, policy decisions and
@@ -324,6 +376,15 @@ The controls, in short:
 
 ## Non-goals
 
+- **Not a defence against a careless human.** The rules protecting the highest-stakes arguments
+  fail to `declassify`, so the final decision is a person's. A reviewer who approves every request
+  lets 6 of 200 attacked runs through; that number is measured, pinned as a CI threshold and
+  printed in the table above rather than left out of it. What the architecture removes is the
+  attacker's ability to act *without* asking; it does not remove the asking.
+- **Confidentiality is measured as a lower bound.** The leak counter matches verbatim fragments of
+  a private record in a delivered argument. A value the quarantined reader summarised or
+  reformatted still carries the right label at the sink, but it is not counted as a leak, so the
+  reported percentage understates the true flow.
 - **Not a defence against a malicious planner.** If the privileged model is itself adversarial, or
   the user's own request is hostile, the plan it writes is authorised by definition. Authority
   limits are a different problem (see `capability-tool-broker`); this repo bounds what *data* can
